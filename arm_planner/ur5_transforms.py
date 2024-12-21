@@ -1,77 +1,96 @@
 import numpy as np
 from scipy.optimize import minimize
 
-def dh_transform(theta, d, a, alpha):
-    """Generate the DH transformation matrix."""
+# Denavit-Hartenberg parameters for the UR5 robot
+# [theta, d, a, alpha]
+dh_params_ur5 = [
+    [0, 0.089159, 0, np.pi/2],     # Joint 1
+    [0, 0, -0.425, 0],              # Joint 2
+    [0, 0, -0.39225, 0],            # Joint 3
+    [0, 0.10915, 0, np.pi/2],       # Joint 4
+    [0, 0.09465, 0, -np.pi/2],      # Joint 5
+    [0, 0.0823, 0, 0]               # Joint 6
+]
+
+dh_params_ur5_w_tool = [
+    [0, 0.089159, 0, np.pi/2],     # Joint 1
+    [0, 0, -0.425, 0],              # Joint 2
+    [0, 0, -0.39225, 0],            # Joint 3
+    [0, 0.10915, 0, np.pi/2],       # Joint 4
+    [0, 0.09465, 0, -np.pi/2],      # Joint 5
+    [0, 0.2623, 0, 0]               # Joint 6 added .18 for tool
+]
+
+def rot_m_from_qu(q):
+    w=q.w
+    x=q.x
+    y=q.y
+    z=q.z
+    rotation = np.array([
+        [1 - 2*(y**2 + z**2), 2*(x*y - w*z), 2*(x*z + w*y)],
+        [2*(x*y + w*z), 1 - 2*(x**2 + z**2), 2*(y*z - w*x)],
+        [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x**2 + y**2)]
+    ])
+    return rotation
+
+def dh_transform_matrix(theta, d, a, alpha):
+    """Compute the transformation matrix for a single joint using DH parameters."""
     return np.array([
-        [np.cos(theta), -np.sin(theta)*np.cos(alpha), np.sin(theta)*np.sin(alpha), a*np.cos(theta)],
-        [np.sin(theta), np.cos(theta)*np.cos(alpha), -np.cos(theta)*np.sin(alpha), a*np.sin(theta)],
+        [np.cos(theta), -np.sin(theta) * np.cos(alpha), np.sin(theta) * np.sin(alpha), a * np.cos(theta)],
+        [np.sin(theta), np.cos(theta) * np.cos(alpha), -np.cos(theta) * np.sin(alpha), a * np.sin(theta)],
         [0, np.sin(alpha), np.cos(alpha), d],
         [0, 0, 0, 1]
     ])
 
-
-def forward_kinematics(joint_angles,tool_offset=[0,0]):
-    """Compute the end-effector position of the UR5 robot from joint angles."""
-    #print(joint_angles)
-    #print(np.pi)
-    # DH Parameters for UR5 (in mm and radians)
-    #dh_params = [
-    #    [joint_angles[0], 0, 0, np.pi / 2],    # Joint 1
-    #    [joint_angles[1], 0, .425, 0],           # Joint 2
-    #    [joint_angles[2], 0, .392, 0],           # Joint 3
-    #    [joint_angles[3], .130, 0, np.pi / 2],   # Joint 4
-    #    [joint_angles[4], 0, 0, -np.pi / 2],    # Joint 5
-    #    [joint_angles[5], 0, 0, 0]              # Joint 6
-    #]
-
-
-    dh_params = [
-        [joint_angles[0], 0, 0, np.pi *(1/2)],    # Joint 1
-        [joint_angles[1], 0, .425, 0],           # Joint 2
-        [joint_angles[2], 0, .392, 0],           # Joint 3
-        [joint_angles[3], .109, 0, np.pi / 2],   # Joint 4
-        [joint_angles[4], .095, 0, -np.pi / 2],    # Joint 5
-        [joint_angles[5], .082+tool_offset[0], tool_offset[1], 0]              # Joint 6  #need to add height of gripper to this
-    ]
-    
-    # Initialize the transformation matrix as the identity matrix
+def forward_kinematics(joint_angles,dh_params):
+    """Compute the forward kinematics (end effector position and rotation) for the UR5 robot."""
+    # Initialize transformation matrix (identity matrix)
     T = np.eye(4)
-    
-    # Multiply transformation matrices for each joint
-    for params in dh_params:
-        T_i = dh_transform(params[0], params[1], params[2], params[3])
-        T = np.dot(T, T_i)  # Multiply the transformation matrices
-    
-    # The position of the end effector is the first three elements of the last column
-    end_effector_position = T[0:3, 3]
-    
-    return end_effector_position
+
+    # Iterate through all joints and apply the DH transformation matrix
+    for i in range(6):
+        theta, d, a, alpha = dh_params[i]
+        theta += joint_angles[i]  # Add joint angle to theta
+        T_i = dh_transform_matrix(theta, d, a, alpha)
+        T = np.dot(T, T_i)  # Multiply the current transformation matrix by the new one
+
+    # End effector position (x, y, z) is the translation part of the final transformation matrix
+    position = T[:3, 3]
+
+    # End effector rotation (3x3 matrix) is the rotation part of the final transformation matrix
+    rotation = T[:3, :3]
+
+    return position, rotation
 
 
-def getCfgForEEPos(ee_pos):
-    print("write this")
 
-
-def ik_objective(joint_angles, target_position):
+def ik_objective(joint_angles, dh_params, target_position,target_rotation):
     """Objective function to minimize: error between target and calculated position."""
-    current_position = forward_kinematics(joint_angles,[0,0])  #to do, measure offset of camera (set second param to) and make this a paremeter of function
-    error = np.linalg.norm(current_position - target_position)
+    current_position,current_rotation = forward_kinematics(joint_angles,dh_params)
+    error_m=np.transpose(target_rotation)*current_rotation
+    error_rot=(np.arccos((np.trace(error_m) - 1) / 2)/(2*3.141596)
+    error_translation = np.linalg.norm(current_position - target_position)
+    #error=error_translation
+    s=.9
+    error=s*error_translation+(1-s)*error_rot
+    print("error",error_translation,error_rot)
+   
     return error
 
 # Solve Inverse Kinematics Using a Numerical Solver (Minimization)
-def inverse_kinematics(target_position, initial_guess):
+def inverse_kinematics(target_position, target_rotation,initial_guess,dh_params):
     """Solve the inverse kinematics problem for a given target position."""
-    result = minimize(ik_objective, initial_guess, args=(target_position,), bounds=[(-np.pi, np.pi)] * 6)
+    result = minimize(ik_objective, initial_guess, args=(dh_params,target_position,target_rotation,), bounds=[(-np.pi, np.pi)] * 6)
     return result.x  # Return the joint angles that minimize the error
 
+#defuct
 def testEEPosTransform():
     cfg=[-1.420226,-0.561880,0.837741,-1.528992,-0.919493,-0.068503,0.489961,0.286832,-0.508009,-0.303644,-0.225533,0.047273,.05]
     object_pos=[-.08,-.13,.31]
-    eePos=forward_kinematics(cfg,[0,.185])  #make first param height of gripper
+    eePos,rot=forward_kinematics(cfg,dh_params_ur5)  #make first param height of gripper
     
     print(eePos)
-    cfg2=inverse_kinematics(eePos+object_pos,[0,0,0,0,0,0])
+    cfg2=inverse_kinematics(eePos+object_pos,rot,[0,0,0,0,0,0],dh_params_ur5)
     print(cfg2*360/(2*3.141596))
-    eePos2=forward_kinematics(cfg2)
+    eePos2=forward_kinematics(cfg2,dh_params_ur5)
     print(eePos2) 
