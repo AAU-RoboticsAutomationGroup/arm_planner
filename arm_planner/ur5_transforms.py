@@ -18,7 +18,7 @@ dh_params_ur5_w_tool = [
     [0, 0, -0.39225, 0],            # Joint 3
     [0, 0.10915, 0, np.pi/2],       # Joint 4
     [0, 0.09465, 0, -np.pi/2],      # Joint 5
-    [0, 0.2623, 0, 0]               # Joint 6 added .18 for tool
+    [0, 0.2773, 0, 0]               # Joint 6 added .195 for tool
 ]
 
 def rot_m_from_qu(q):
@@ -42,7 +42,7 @@ def dh_transform_matrix(theta, d, a, alpha):
         [0, 0, 0, 1]
     ])
 
-def forward_kinematics(joint_angles,dh_params):
+def forward_kinematics_helper(joint_angles,dh_params):
     """Compute the forward kinematics (end effector position and rotation) for the UR5 robot."""
     # Initialize transformation matrix (identity matrix)
     T = np.eye(4)
@@ -53,6 +53,12 @@ def forward_kinematics(joint_angles,dh_params):
         theta += joint_angles[i]  # Add joint angle to theta
         T_i = dh_transform_matrix(theta, d, a, alpha)
         T = np.dot(T, T_i)  # Multiply the current transformation matrix by the new one
+
+    return T
+
+
+def forward_kinematics(joint_angles,dh_params):
+    T=forward_kinematics_helper(joint_angles,dh_params)
 
     # End effector position (x, y, z) is the translation part of the final transformation matrix
     position = T[:3, 3]
@@ -68,12 +74,12 @@ def ik_objective(joint_angles, dh_params, target_position,target_rotation):
     """Objective function to minimize: error between target and calculated position."""
     current_position,current_rotation = forward_kinematics(joint_angles,dh_params)
     error_m=np.transpose(target_rotation)*current_rotation
-    error_rot=(np.arccos((np.trace(error_m) - 1) / 2)/(2*3.141596)
+    error_rot=(np.arccos((np.trace(error_m) - 1) / 2)/(2*3.141596))
     error_translation = np.linalg.norm(current_position - target_position)
     #error=error_translation
-    s=.9
+    s=.5
     error=s*error_translation+(1-s)*error_rot
-    print("error",error_translation,error_rot)
+    #print("error",error_translation,error_rot)
    
     return error
 
