@@ -18,7 +18,7 @@ dh_params_ur5_w_tool = [
     [0, 0, -0.39225, 0],            # Joint 3
     [0, 0.10915, 0, np.pi/2],       # Joint 4
     [0, 0.09465, 0, -np.pi/2],      # Joint 5
-    [0, 0.2773, 0, 0]               # Joint 6 added .195 for tool
+    [0, 0.2573, 0, 0]               # Joint 6 17.5 cm, which is length of tool
 ]
 
 def rot_m_from_qu(q):
@@ -77,7 +77,7 @@ def ik_objective(joint_angles, dh_params, target_position,target_rotation):
     error_rot=(np.arccos((np.trace(error_m) - 1) / 2)/(2*3.141596))
     error_translation = np.linalg.norm(current_position - target_position)
     #error=error_translation
-    s=.5
+    s=.55
     error=s*error_translation+(1-s)*error_rot
     #print("error",error_translation,error_rot)
    
