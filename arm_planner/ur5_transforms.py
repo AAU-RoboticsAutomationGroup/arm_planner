@@ -21,6 +21,21 @@ dh_params_ur5_w_tool = [
     [0, 0.2573, 0, 0]               # Joint 6 17.5 cm, which is length of tool
 ]
 
+
+# Upper bounds for the UR5 robot joints (in radians)
+bound_u = np.array([2.8973, 1.7628, 2.8973, 3.1416, 2.8973, 2.8973])
+
+# Lower bounds for the UR5 robot joints (in radians)
+bound_l = np.array([-2.8973, -1.7628, -2.8973, -3.1416, -2.8973, -2.8973])
+
+
+def isInBound(x,jid):
+    if x<bound_l[jid]:
+        return false
+    if x>bound_u[jid]:
+        return false
+    return true
+
 def rot_m_from_qu(q):
     w=q.w
     x=q.x
