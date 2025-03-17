@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.optimize import minimize
+import sympy as sp
 
 # Denavit-Hartenberg parameters for the UR5 robot
 # [theta, d, a, alpha]
@@ -70,6 +71,30 @@ def forward_kinematics_helper(joint_angles,dh_params):
         T = np.dot(T, T_i)  # Multiply the current transformation matrix by the new one
 
     return T
+
+
+def compute_jacobian(dh_params):
+    p=[0,0,0,0,0,0,0]
+    z=[0,0,0,0,0,0,0]
+    p[0]=sp.Matrix([0, 0, 0])
+    z[0} = sp.Matrix([0, 0, 1])    
+    T = np.eye(4)
+    for i in range(6):
+        theta, d, a, alpha = dh_params[i]
+        T_i = dh_transform_matrix(theta, d, a, alpha)
+        T = np.dot(T, T_i) 
+        p[i+1]=T[:3, 3]
+        z[i+1]=T[:3, 2]
+    Jv = []
+    Jw = []
+    for i in range(6):
+        Jv.append(z[i+1].cross(p[6] - p[i]))
+        Jw.append(z[i+1])
+    Jv = sp.Matrix.hstack(*Jv)
+    Jw = sp.Matrix.hstack(*Jw)
+    Jacobian = sp.Matrix.vstack(Jv, Jw)
+    return Jacobian
+
 
 
 def forward_kinematics(joint_angles,dh_params):
