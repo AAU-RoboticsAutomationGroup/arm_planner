@@ -1,6 +1,5 @@
 import numpy as np
 from scipy.optimize import minimize
-import sympy as sp
 
 # Denavit-Hartenberg parameters for the UR5 robot
 # [theta, d, a, alpha]
@@ -22,7 +21,6 @@ dh_params_ur5_w_tool = [
     [0, 0.2573, 0, 0]               # Joint 6 17.5 cm, which is length of tool
 ]
 
-
 # Upper bounds for the UR5 robot joints (in radians)
 bound_u = np.array([2.8973, 1.7628, 2.8973, 3.1416, 2.8973, 2.8973])
 
@@ -36,6 +34,7 @@ def isInBound(x,jid):
     if x>bound_u[jid]:
         return false
     return true
+
 
 def rot_m_from_qu(q):
     w=q.w
@@ -73,30 +72,6 @@ def forward_kinematics_helper(joint_angles,dh_params):
     return T
 
 
-def compute_jacobian(dh_params):
-    p=[0,0,0,0,0,0,0]
-    z=[0,0,0,0,0,0,0]
-    p[0]=sp.Matrix([0, 0, 0])
-    z[0} = sp.Matrix([0, 0, 1])    
-    T = np.eye(4)
-    for i in range(6):
-        theta, d, a, alpha = dh_params[i]
-        T_i = dh_transform_matrix(theta, d, a, alpha)
-        T = np.dot(T, T_i) 
-        p[i+1]=T[:3, 3]
-        z[i+1]=T[:3, 2]
-    Jv = []
-    Jw = []
-    for i in range(6):
-        Jv.append(z[i+1].cross(p[6] - p[i]))
-        Jw.append(z[i+1])
-    Jv = sp.Matrix.hstack(*Jv)
-    Jw = sp.Matrix.hstack(*Jw)
-    Jacobian = sp.Matrix.vstack(Jv, Jw)
-    return Jacobian
-
-
-
 def forward_kinematics(joint_angles,dh_params):
     T=forward_kinematics_helper(joint_angles,dh_params)
 
@@ -117,7 +92,7 @@ def ik_objective(joint_angles, dh_params, target_position,target_rotation):
     error_rot=(np.arccos((np.trace(error_m) - 1) / 2)/(2*3.141596))
     error_translation = np.linalg.norm(current_position - target_position)
     #error=error_translation
-    s=.55
+    s=.35
     error=s*error_translation+(1-s)*error_rot
     #print("error",error_translation,error_rot)
    
@@ -128,6 +103,30 @@ def inverse_kinematics(target_position, target_rotation,initial_guess,dh_params)
     """Solve the inverse kinematics problem for a given target position."""
     result = minimize(ik_objective, initial_guess, args=(dh_params,target_position,target_rotation,), bounds=[(-np.pi, np.pi)] * 6)
     return result.x  # Return the joint angles that minimize the error
+
+
+def compute_jacobian(dh_params):
+    p=[0,0,0,0,0,0,0]
+    z=[0,0,0,0,0,0,0]
+    p[0]=sp.Matrix([0, 0, 0])
+    z[0] = sp.Matrix([0, 0, 1])    
+    T = np.eye(4)
+    for i in range(6):
+        theta, d, a, alpha = dh_params[i]
+        T_i = dh_transform_matrix(theta, d, a, alpha)
+        T = np.dot(T, T_i) 
+        p[i+1]=T[:3, 3]
+        z[i+1]=T[:3, 2]
+    Jv = []
+    Jw = []
+    for i in range(6):
+        Jv.append(z[i+1].cross(p[6] - p[i]))
+        Jw.append(z[i+1])
+    Jv = sp.Matrix.hstack(*Jv)
+    Jw = sp.Matrix.hstack(*Jw)
+    Jacobian = sp.Matrix.vstack(Jv, Jw)
+    return Jacobian
+
 
 #defuct
 def testEEPosTransform():
@@ -140,3 +139,22 @@ def testEEPosTransform():
     print(cfg2*360/(2*3.141596))
     eePos2=forward_kinematics(cfg2,dh_params_ur5)
     print(eePos2) 
+
+
+def euler_from_rotation_matrix(R):
+    assert R.shape == (3, 3), "Rotation matrix must be 3x3"
+    theta = np.arcsin(-R[2, 0])
+    if np.abs(np.cos(theta)) > 1e-6:
+        psi = np.arctan2(R[1, 0], R[0, 0]) 
+    else:
+        psi = 0 
+    print(psi,theta)
+    return psi, theta
+
+def angle_between_rotation_matrices(R1, R2):
+    R_rel = np.dot(R2, np.linalg.inv(R1))
+    print(R_rel)
+    psi, theta = euler_from_rotation_matrix(R_rel)
+    return psi, theta
+
+
