@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.optimize import minimize
+import sympy as sp
 
 # Denavit-Hartenberg parameters for the UR5 robot
 # [theta, d, a, alpha]
@@ -106,27 +107,31 @@ def inverse_kinematics(target_position, target_rotation,initial_guess,dh_params)
 
 
 def compute_jacobian(dh_params):
-    p=[0,0,0,0,0,0,0]
-    z=[0,0,0,0,0,0,0]
-    p[0]=sp.Matrix([0, 0, 0])
-    z[0] = sp.Matrix([0, 0, 1])    
-    T = np.eye(4)
+    p = [None]*7
+    z = [None]*7
+    p[0] = sp.Matrix([0, 0, 0])
+    z[0] = sp.Matrix([0, 0, 1])
+
+    T = sp.eye(4)
     for i in range(6):
         theta, d, a, alpha = dh_params[i]
         T_i = dh_transform_matrix(theta, d, a, alpha)
-        T = np.dot(T, T_i) 
-        p[i+1]=T[:3, 3]
-        z[i+1]=T[:3, 2]
+        T = T * T_i
+        p[i+1] = T[0:3, 3]
+        z[i+1] = T[0:3, 2]
+
     Jv = []
     Jw = []
+
     for i in range(6):
-        Jv.append(z[i+1].cross(p[6] - p[i]))
-        Jw.append(z[i+1])
+        Jv.append(z[i].cross(p[6] - p[i]))
+        Jw.append(z[i])
+
     Jv = sp.Matrix.hstack(*Jv)
     Jw = sp.Matrix.hstack(*Jw)
     Jacobian = sp.Matrix.vstack(Jv, Jw)
-    return Jacobian
 
+    return sp.simplify(Jacobian)
 
 #defuct
 def testEEPosTransform():
@@ -156,5 +161,43 @@ def angle_between_rotation_matrices(R1, R2):
     print(R_rel)
     psi, theta = euler_from_rotation_matrix(R_rel)
     return psi, theta
+
+import numpy as np
+
+def straighten_up_rotation(R):
+    """
+    Adjusts a rotation matrix where the up vector is the last column.
+    Ensures the up vector points straight up (0, 1, 0),
+    while keeping the heading in the XY plane unchanged.
+    """
+    # Desired up vector
+    new_up = np.array([0, 1, 0])
+
+    # Get the forward vector (column 1 in this case)
+    forward = R[:, 1]
+
+    # Project forward vector into XZ plane to keep heading
+    forward_xy = np.array([forward[0], 0, forward[2]])
+    forward_xy_norm = np.linalg.norm(forward_xy)
+
+    # Prevent division by zero if forward is vertical
+    if forward_xy_norm < 1e-6:
+        # Default heading if forward is nearly vertical
+        forward_xy = np.array([0, 0, 1])
+    else:
+        forward_xy = forward_xy / forward_xy_norm
+
+    # Compute right vector (X axis)
+    right = np.cross(forward_xy, new_up)
+    right = right / np.linalg.norm(right)
+
+    # Recompute forward vector to ensure orthogonality
+    new_forward = np.cross(new_up, right)
+    new_forward = new_forward / np.linalg.norm(new_forward)
+
+    # Construct the new rotation matrix: [right, forward, up]
+    new_R = np.column_stack((right, new_forward, new_up))
+    return new_R
+
 
 
