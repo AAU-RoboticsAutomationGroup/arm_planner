@@ -1,26 +1,41 @@
 import numpy as np
 from scipy.optimize import minimize
 import sympy as sp
+from scipy.spatial import distance
+import copy
+from scipy.spatial.transform import Rotation as R
+import math
 
 # Denavit-Hartenberg parameters for the UR5 robot
 # [theta, d, a, alpha]
-dh_params_ur5 = [
+dh_params_ur5 = np.array([
     [0, 0.089159, 0, np.pi/2],     # Joint 1
     [0, 0, -0.425, 0],              # Joint 2
     [0, 0, -0.39225, 0],            # Joint 3
     [0, 0.10915, 0, np.pi/2],       # Joint 4
     [0, 0.09465, 0, -np.pi/2],      # Joint 5
     [0, 0.0823, 0, 0]               # Joint 6
-]
+])
 
-dh_params_ur5_w_tool = [
+dh_params_ur5_w_tool =  np.array([
     [0, 0.089159, 0, np.pi/2],     # Joint 1
     [0, 0, -0.425, 0],              # Joint 2
     [0, 0, -0.39225, 0],            # Joint 3
     [0, 0.10915, 0, np.pi/2],       # Joint 4
     [0, 0.09465, 0, -np.pi/2],      # Joint 5
     [0, 0.2573, 0, 0]               # Joint 6 17.5 cm, which is length of tool
-]
+])
+
+# UR5 screw axes (space frame) as columns
+# [w; v] where w is rotation axis and v is linear velocity component
+Slist = np.array([[0, 0, 1, 0, 0, 0],
+                  [0, -1, 0, -0.089159, 0, 0],
+                  [0, -1, 0, -0.089159, 0, 0.425],
+                  [0, -1, 0, -0.089159, 0, 0.81725],
+                  [1, 0, 0, 0, -0.10915, 0],
+                  [0, -1, 0, -0.089159, 0, 0.81725]]).T
+
+
 
 # Upper bounds for the UR5 robot joints (in radians)
 bound_u = np.array([2.8973, 1.7628, 2.8973, 3.1416, 2.8973, 2.8973])
@@ -48,6 +63,11 @@ def rot_m_from_qu(q):
         [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x**2 + y**2)]
     ])
     return rotation
+
+def skew_to_vector(S):
+    """Convert a 3x3 skew-symmetric matrix to a 3x1 vector."""
+    return sp.Matrix([S[2, 1], S[0, 2], S[1, 0]])
+
 
 def dh_transform_matrix(theta, d, a, alpha):
     """Compute the transformation matrix for a single joint using DH parameters."""
@@ -106,7 +126,122 @@ def inverse_kinematics(target_position, target_rotation,initial_guess,dh_params)
     return result.x  # Return the joint angles that minimize the error
 
 
-def compute_jacobian(dh_params):
+
+
+
+
+def rotation_axis_from_matrix(R):
+    """
+    Extract the axis of rotation (spin direction) from a 3x3 rotation matrix.
+    
+    Parameters:
+        R (numpy.ndarray): 3x3 rotation matrix.
+        
+    Returns:
+        axis (numpy.ndarray): 3D unit vector representing the axis of rotation.
+    """
+    assert R.shape == (3, 3), "Input must be a 3x3 rotation matrix."
+
+    # Compute angle of rotation
+    theta = np.arccos((np.trace(R) - 1) / 2)
+
+    # If the angle is very small (near identity), axis is ambiguous
+    if np.isclose(theta, 0):
+        return np.array([0, 0, 0])  # or return arbitrary axis
+
+    # Compute the axis using the skew-symmetric part
+    axis = np.array([
+        R[2,1] - R[1,2],
+        R[0,2] - R[2,0],
+        R[1,0] - R[0,1]
+    ]) / (2 * np.sin(theta))
+
+    return axis
+
+
+
+
+
+epsilon=.0001
+def move_towards_ee_pos(current_cfg,ee_pos_goal,dh_params,delta_t=.01):
+    v=np.zeros_like(current_cfg)
+    current_ee_pos,current_ee_rot=forward_kinematics(current_cfg,dh_params)
+    d_current = distance.euclidean(current_ee_pos,ee_pos_goal)
+    for i in range(len(current_cfg)):
+        cfg_dx=copy.deepcopy(current_cfg)
+        cfg_dx[i]=cfg_dx[i]+epsilon
+        dx_ee_pos,dx_ee_rot=forward_kinematics(cfg_dx,dh_params)
+        print(i,current_ee_pos,dx_ee_pos)
+        d_dx=distance.euclidean(dx_ee_pos,ee_pos_goal)
+        print('d',d_current,d_dx,d_current-d_dx)
+        #if d_dx is bigger than d_current dx should be negative 
+        dx=d_current-d_dx
+        v[i]=dx*delta_t/epsilon
+    return v
+
+
+#give joint velocity control that moves robot end effector in direction of vector v
+pos_vs_rot_scaling_factor=[1,1,1,0,0,0]
+x, y, z = sp.symbols('x y z')
+coords = (x, y, z)
+
+def velocity_in_dir_of_vector(current_cfg,vec,dh_params,delta_t=.01):
+    v=np.zeros_like(current_cfg)
+    current_ee_pos,current_ee_rot=forward_kinematics(current_cfg,dh_params)
+    for i in range(len(current_cfg)):
+        print()
+        print()
+        print(i)
+        cfg_dx=copy.deepcopy(current_cfg)
+        cfg_dx[i]=cfg_dx[i]+epsilon
+        dx_ee_pos,dx_ee_rot=forward_kinematics(cfg_dx,dh_params)
+        print('dx_ee_pos',dx_ee_pos)
+
+        vec_dx=[dx_ee_pos[i]-current_ee_pos[i] for i in range(len(current_ee_pos))]
+        angle_axis_c = R.from_matrix(current_ee_rot).as_rotvec()  # Log map SO(3)
+        angle_axis_dx = R.from_matrix(dx_ee_rot).as_rotvec()  # Log map SO(3)
+        print('angle axis diff',angle_axis_c,angle_axis_dx)
+        angle_axis=angle_axis_dx-angle_axis_c
+        
+        #R_diff = 0.5 * (dx_ee_rot.T @ current_ee_rot - current_ee_rot.T @ dx_ee_rot)
+        #angle_axis = R.from_matrix(R_diff).as_rotvec()  # Log map SO(3)
+        angle_axis=angle_axis/np.linalg.norm(angle_axis)
+        print('angle axis diff',angle_axis)
+
+        torque=vec[3:6]
+
+        ##############
+        #rot = R.from_matrix(R_diff)
+        #R_euler = rot.as_euler(order, degrees=False)
+        #print('R_euler',R_euler)
+        
+        #spin= rotation_axis_from_matrix(R_diff)
+        #spin=spin/np.linalg.norm(spin)
+        #print('R_diff, spin', R_diff,',',spin)
+        #print('torque',torque)
+        #R_err = dx_ee_rot @ current_ee_rot.T
+        #print('R_diff', R_diff)
+        #tau=skew_to_vector(R_diff)
+        #print('tau',tau)
+        #cross=np.cross(torque,spin)
+        #print('cross',cross)
+        #print('R_err_vec', R_err_vec)
+        #print('vec',vec)
+        #print('vec_dx',vec_dx)
+        ###########
+        
+        diff_pos=pos_vs_rot_scaling_factor[i]*np.dot(vec[:3],vec_dx)/epsilon
+        diff_rot=sum([-torque[i]*angle_axis[i] for i in range(len(torque))])
+        #diff_rot=math.sqrt(diff_rot)
+        print(diff_rot)
+        diff_rot=(1-pos_vs_rot_scaling_factor[i])*diff_rot#distance.euclidean(torque,angle_axis)#np.dot(torque,angle_axis)
+        print('diff', diff_pos,diff_rot)
+        #if i>2:
+        v[i]=diff_pos+diff_rot
+    return v
+
+
+def compute_jacobian(dh_params,cfg):
     p = [None]*7
     z = [None]*7
     p[0] = sp.Matrix([0, 0, 0])
@@ -115,6 +250,7 @@ def compute_jacobian(dh_params):
     T = sp.eye(4)
     for i in range(6):
         theta, d, a, alpha = dh_params[i]
+        theta=theta+cfg[i]
         T_i = dh_transform_matrix(theta, d, a, alpha)
         T = T * T_i
         p[i+1] = T[0:3, 3]
@@ -198,6 +334,7 @@ def straighten_up_rotation(R):
     # Construct the new rotation matrix: [right, forward, up]
     new_R = np.column_stack((right, new_forward, new_up))
     return new_R
+
 
 
 
